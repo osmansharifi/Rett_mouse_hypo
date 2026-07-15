@@ -11,7 +11,6 @@ gene_cell_counts <- rowSums(GetAssayData(all_hypo_soupx, layer = "counts") > 0)
 min(gene_cell_counts) # 10
 min(all_hypo_soupx$nFeature_RNA) # 200
 
-
 ## orig.ident: sample name
 sample <- sub("^(([^_]+_){3}[^_]+).*", "\\1", row.names(all_hypo_soupx@meta.data))
 all_hypo_soupx$orig.ident <- sample
