@@ -3,6 +3,7 @@ library(biomaRt)
 library(gprofiler2) # ‘0.2.4’
 packageVersion("Seurat") # ‘5.3.0’
 
+
 getwd() # "/quobyte/lasallegrp/Osman/shenyu/02_seurat_objects"
 load(all_hypo_soupx.RData)
 # all_hypo_soupx <- CreateSeuratObject(counts = all_hypo_soupx, project = "all_hypo_soupx", min.cells = 3, min.features = 200)
