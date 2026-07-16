@@ -3,34 +3,46 @@ library(biomaRt)
 library(gprofiler2) # ‘0.2.4’
 packageVersion("Seurat") # ‘5.3.0’
 
-
 getwd() # "/quobyte/lasallegrp/Osman/shenyu/02_seurat_objects"
-load(all_hypo_soupx.RData)
-# all_hypo_soupx <- CreateSeuratObject(counts = all_hypo_soupx, project = "all_hypo_soupx", min.cells = 3, min.features = 200)
-head(all_hypo_soupx)
-gene_cell_counts <- rowSums(GetAssayData(all_hypo_soupx, layer = "counts") > 0)
-min(gene_cell_counts) # 10
-min(all_hypo_soupx$nFeature_RNA) # 200
+load("hypo_adult_unfiltered.RData")
+seu <- CreateSeuratObject(counts = seu, project = "Rett_hypothalamus", min.cells = 0, min.features = 0)
+gene_cell_counts <- rowSums(GetAssayData(seu, layer = "counts") > 0)
+min(gene_cell_counts) # 0
+min(seu$nFeature_RNA) # 0
+head(seu)
 
-## orig.ident: sample name
-sample <- sub("^(([^_]+_){3}[^_]+).*", "\\1", row.names(all_hypo_soupx@meta.data))
-all_hypo_soupx$orig.ident <- sample
-head(all_hypo_soupx)
+## orig.ident: metadata mapping
+hypo_sample_metadata <- read.csv("hypo_sample_metadata.csv")
+head(hypo_sample_metadata)
+match_key <- paste0(gsub("-", "_", hypo_sample_metadata$mouse), "_H")
+map_dict <- setNames(hypo_sample_metadata$sample_name, match_key)
+new_idents <- map_dict[as.character(seu$orig.ident)]
+new_idents <- unname(new_idents)  
+seu$orig.ident <- new_idents
+Idents(seu) <- "orig.ident"
+old_prefix <- paste0(gsub("-", "_", hypo_sample_metadata$mouse), "_H") 
+new_prefix <- hypo_sample_metadata$sample_name
+old_cell_names <- colnames(seu)
+new_cell_names <- old_cell_names
+for (i in seq_along(old_prefix)) {
+  new_cell_names <- gsub(old_prefix[i], new_prefix[i], new_cell_names)
+}
+seu <- RenameCells(seu, new.names = new_cell_names)
 
 ## sex
-all_hypo_soupx$sex <- ifelse(grepl("_M_", all_hypo_soupx$orig.ident), "M",
-                             ifelse(grepl("_F_", all_hypo_soupx$orig.ident), "F", NA))
-head(all_hypo_soupx)
+seu$sex <- ifelse(grepl("_M_", seu$orig.ident), "M",
+                             ifelse(grepl("_F_", seu$orig.ident), "F", NA))
+head(seu)
 
 ## genotype
-all_hypo_soupx$genotype <- sub("_.*", "", all_hypo_soupx$orig.ident)
-head(all_hypo_soupx)
+seu$genotype <- sub("_.*", "", seu$orig.ident)
+head(seu)
 
 ## time_point
-all_hypo_soupx$time_point <- regmatches(all_hypo_soupx$orig.ident, regexpr("P\\d+", all_hypo_soupx$orig.ident))
-head(all_hypo_soupx)
-all_hypo_soupx$time_point <- factor(
-  all_hypo_soupx$time_point, 
+seu$time_point <- regmatches(seu$orig.ident, regexpr("P\\d+", seu$orig.ident))
+head(seu)
+seu$time_point <- factor(
+  seu$time_point, 
   levels = c("P30", "P60", "P120", "P150")
 )
 
@@ -38,11 +50,12 @@ all_hypo_soupx$time_point <- factor(
 # merged_seurat$log10GenesPerUMI <- log10(merged_seurat$nFeature_RNA) / log10(merged_seurat$nCount_RNA)
 
 ## percent.mt
-all_hypo_soupx [["percent.mt"]] <- PercentageFeatureSet(all_hypo_soupx, pattern = "^mt-")
-head(all_hypo_soupx)
+seu [["percent.mt"]] <- PercentageFeatureSet(seu, pattern = "^mt-")
+head(seu)
 
 ## cell cycle
-head(all_hypo_soupx@assays)
+seu <- NormalizeData(seu)
+head(seu@assays)
 # A list of cell cycle markers from Tirosh et al, 2015
 s.genes <- cc.genes$s.genes
 g2m.genes <- cc.genes$g2m.genes
@@ -68,7 +81,8 @@ m.g2m.genes = gorth(cc.genes$g2m.genes, source_organism = "hsapiens", target_org
 head(m.s.genes) # "Mcm5" "Pcna" "Tyms" "Fen1" "Mcm2" "Mcm4"
 head(m.g2m.genes) # "Hmgb2"  "Cdk1"   "Nusap1" "Birc5"  "Tpx2"   "Top2a"
 
-all_hypo_soupx <- CellCycleScoring(all_hypo_soupx, s.features = m.s.genes, g2m.features = m.g2m.genes, set.ident = TRUE)
-head(all_hypo_soupx)
+seu <- CellCycleScoring(seu, s.features = m.s.genes, g2m.features = m.g2m.genes, set.ident = TRUE)
+head(seu)
 
-saveRDS(all_hypo_soupx, file = "all_hypo_soupx_metadata.rds")
+setwd("/quobyte/lasallegrp/Osman/shenyu/02_seurat_objects")
+saveRDS(seu, file = "seu_metadata.rds") # seu with metadata & the normalized data layer
