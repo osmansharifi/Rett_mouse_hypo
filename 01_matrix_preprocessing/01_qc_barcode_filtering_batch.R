@@ -72,11 +72,8 @@ gene_lower_limit <- attr(qc.nFeature_RNA, "thresholds")["lower", ]
 gene_upper_limit <- attr(qc.nFeature_RNA, "thresholds")["higher", ]
 
 # Execute Filtering
-seu_filtered <- subset(seu, 
-              nCount_RNA >= umi_lower_limit & nCount_RNA <= umi_upper_limit & 
-                nFeature_RNA >= gene_lower_limit & nFeature_RNA <= gene_upper_limit & 
-                percent.mt <= 1)
 seu$discard <- qc.nCount_RNA | qc.nFeature_RNA | (seu$percent.mt > 1)
+seu_filtered <- subset(seu, subset = !discard)
 head(seu)
 
 # Document cell filtration statistics
@@ -137,7 +134,7 @@ p2 <- QC_Plot_GenevsFeature(seu_filtered,
                             feature1 = "percent.mt", 
                             high_cutoff_feature = 1, 
                             y_axis_label = "Genes per Nucleus", x_axis_label = "percent.mt per Nucleus",
-                            raster = FALSE) # r = -.13
+                            raster = FALSE) # r = -.12
 ggplot2::ggsave("QC_Plot_percent.mtvsGene_filtered.pdf", plot = p2, height = 8.5, width = 10) 
 
 # Mito histogram post-filtering
