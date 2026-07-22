@@ -70,10 +70,10 @@ ggplot2::ggsave(file.path(FIG_DIR, "histogram_G2M.Score.pdf"), plot = p, height 
 p <- FeatureScatter(seu, feature1 = "S.Score", feature2 = "Mcm6")
 ggplot2::ggsave(file.path(FIG_DIR, "scatter_S.Score_Mcm6.pdf"), plot = p, height = 8.5, width = 10)
 
-# Phase does not show clear separation in PCA space
+# Evaluate the biological relevance of Phase 
 seu <- ScaleData(seu, features = rownames(seu))
 seu <- RunPCA(seu, features = c(m.s.genes, m.g2m.genes)) # group.by = "Phase"
-p <- DimPlot(seu)
+p <- DimPlot(seu, pt.size = 0.8)
 ggplot2::ggsave(file.path(FIG_DIR, "pca_exprmarker_phase.pdf"), plot = p, height = 8.5, width = 10)
 
 sdev <- seu[["pca"]]@stdev
@@ -102,12 +102,25 @@ plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
 p <- plot1 + plot2
 ggplot2::ggsave(file.path(FIG_DIR, glue::glue("HVG_{nfeature}.pdf")), plot = p, height = 8.5, width = 10)
 
+# exprhvg grouped by phase -------------------------------------------------------
+seu <- RunPCA(seu, features = VariableFeatures(seu))
+p <- DimPlot(seu, pt.size = 0.8)
+ggplot2::ggsave(file.path(FIG_DIR, glue::glue("pca_exprhvg_phase.pdf")), plot = p, height = 8.5, width = 10)
+sdev <- seu[["pca"]]@stdev
+var_explained <- (sdev^2) / sum(sdev^2)
+var_explained[1:2] # 0.2224932 0.1152684
+
 
 # 4. Standardization & Regression ----------------------------------------
 seu <- ScaleData(seu, vars.to.regress = c("S.Score", "G2M.Score", "percent.mt"), features = VariableFeatures(seu))
 
+# Batch Effect Assessment (PCA by orig.ident)
+seu <- RunPCA(seu) # Default: npcs = 50, features= VariableFeatures(seu) for the scaled Assay
+p <- DimPlot(seu, reduction = "pca", group.by = "orig.ident", pt.size = 0.8)
+ggplot2::ggsave(file.path(FIG_DIR, "pca_exprhvg_batch.pdf"), plot = p, height = 8.5, width = 10)
 
-# Save Scaled Data -------------------------------------------------------
+
+# 5. Save Scaled Data -------------------------------------------------------
 seu[["pca"]] <- NULL
 Reductions(seu)
 saveRDS(seu, file = file.path(DATA_DIR, "seu_scaled.rds"))
