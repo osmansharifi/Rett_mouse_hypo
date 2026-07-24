@@ -1,4 +1,4 @@
-# Rett_mouse_hypo
+# Rett syndrome mouse hypothalamus
 
 Longitudinal single-nucleus RNA-seq analysis of a *Mecp2* Rett syndrome mouse
 model in the hypothalamus, resolving **per-cell wild-type vs mutant *Mecp2*
