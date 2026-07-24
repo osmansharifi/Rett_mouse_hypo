@@ -1,0 +1,19 @@
+# Conda environment for the Rett_mouse_hypo allele + expression pipeline.
+#   conda env create -f environment.yml -p /path/to/envs/rett_hypo
+#   conda activate /path/to/envs/rett_hypo
+#   Rscript -e 'install.packages("SoupX", repos="https://cloud.r-project.org")'
+name: rett_hypo
+channels: [conda-forge, bioconda]
+dependencies:
+  - r-base=4.4
+  - r-seurat            # 5.x
+  - r-matrix
+  - r-data.table
+  - r-ggplot2
+  - r-patchwork
+  - r-dplyr
+  - r-harmony
+  - bioconductor-deseq2
+  - samtools>=1.16      # needs --output-extra CB,UB
+  - python>=3.9
+  # SoupX is CRAN-only: install after env creation (see comment above)
