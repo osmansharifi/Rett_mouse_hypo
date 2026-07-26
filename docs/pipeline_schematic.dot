@@ -1,0 +1,70 @@
+// Rett_mouse_hypo analysis pipeline
+// Render: dot -Tpdf pipeline_schematic.dot -o pipeline_schematic.pdf
+//         dot -Tjpg -Gdpi=200 pipeline_schematic.dot -o pipeline_schematic.jpg
+digraph pipeline {
+    rankdir=TB;
+    graph [fontname="Helvetica", fontsize=16, labelloc="t", nodesep=0.35, ranksep=0.55,
+           label="Rett mouse hypothalamus snRNA-seq: expression + Mecp2 allele pipeline"];
+    node  [fontname="Helvetica", fontsize=11, style="filled,rounded", shape=box, penwidth=1.2];
+    edge  [fontname="Helvetica", fontsize=9, color="#555555"];
+
+    // ---- inputs ----
+    subgraph cluster_in {
+        label=""; color=white;
+        cr   [label="CellRanger output\n(28 samples, _H)\nfiltered + raw matrices, BAM", fillcolor="#E8E8E8"];
+        meta [label="sample metadata\n(genotype, sex, timepoint)", fillcolor="#E8E8E8"];
+        hypo [label="HypoMap reference\n(Steuernagel et al. 2022)\nC25 / C66 levels", fillcolor="#E8E8E8"];
+    }
+
+    // ---- track 1: expression (mostly in 01_matrix_preprocessing, upstream) ----
+    prep [label="01  matrix preprocessing\nQC · doublets · normalize · scale\n(seu_scaled.rds)", fillcolor="#CFE8CF"];
+
+    subgraph cluster_expr {
+        label="expression track";
+        style="rounded,filled"; fillcolor="#F2FAF2"; color="#7FB77F"; fontcolor="#2E6B2E";
+        clust [label="03  clustering\nHarmony (batch=sample)\nPCA · neighbors · UMAP", fillcolor="#CFE8CF"];
+        ann   [label="04  annotation\nHypoMap C25 + C66 transfer\nhierarchical reconciliation\n(confident + consistent)", fillcolor="#CFE8CF"];
+    }
+
+    // ---- track 2: allele ----
+    subgraph cluster_allele {
+        label="Mecp2 allele track";
+        style="rounded,filled"; fillcolor="#FFF3E8"; color="#E0A15E"; fontcolor="#9A5B12";
+        geno  [label="02  allele genotyping\nsamtools mpileup @ chrX:74,085,586\nWT=T / MUT=A · per (barcode,UMI)", fillcolor="#FBE0C3"];
+        rawm  [label="02  raw Mecp2 build\nuncorrected counts +\nwithin-cell allele propagation", fillcolor="#FBE0C3"];
+    }
+
+    // ---- convergence ----
+    attach [label="05  attach alleles\njoin allele calls to annotated cells\n(seu_annotated_allele.rds)", fillcolor="#DCD0F0"];
+    ctype  [label="05  build cell_type\nC66->C25 collapse +\ncount-aware grouping · trim", fillcolor="#DCD0F0"];
+
+    // ---- outputs ----
+    subgraph cluster_out {
+        label="";
+        deg  [label="06  pseudobulk DEG\nMUT-active vs WT-active\npaired within het females\n~ mouse + allele (DESeq2)", fillcolor="#F5CCCC"];
+        mos  [label="mosaicism analysis\nallele ratio per cell type\nvs ambient soup baseline", fillcolor="#F5CCCC"];
+    }
+
+    // ---- edges ----
+    cr   -> prep;
+    prep -> clust -> ann;
+    cr   -> geno;
+    cr   -> rawm;
+    geno -> rawm [style=dashed, label="allele calls"];
+
+    ann   -> attach;
+    geno  -> attach [label="per-cell WT/MUT"];
+    rawm  -> attach [label="raw Mecp2 expr"];
+    meta  -> attach [style=dashed];
+
+    attach -> ctype;
+    ctype  -> deg;
+    ctype  -> mos;
+    geno   -> mos [style=dashed];
+
+    hypo  -> ann [style=dashed];
+
+    { rank=same; clust; geno }
+    { rank=same; ann; rawm }
+    { rank=same; deg; mos }
+}
