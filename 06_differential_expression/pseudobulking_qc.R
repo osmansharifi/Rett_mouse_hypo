@@ -1,5 +1,6 @@
 #!/usr/bin/env Rscript
 
+library(Seurat)
 library(dplyr)
 library(ggplot2)
 
