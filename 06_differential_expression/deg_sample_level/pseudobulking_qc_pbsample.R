@@ -25,8 +25,6 @@ N_PCS_VAR   <- 30
 # Columns to test against pseudobulk PCs when present in the pseudobulk metadata.
 BASE_PCA_COVARIATES <- c(
   "sample",
-  "label",
-  "replicate",
   "animal_genotype",
   "animal_sex",
   "animal_timepoint",
