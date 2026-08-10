@@ -25,6 +25,8 @@ N_PCS_VAR   <- 30
 # Columns to test against pseudobulk PCs when present in the pseudobulk metadata.
 BASE_PCA_COVARIATES <- c(
   "sample",
+  "label",
+  "replicate",
   "animal_genotype",
   "animal_sex",
   "animal_timepoint",
@@ -42,6 +44,12 @@ clean_pb_component <- function(x) {
 
 make_pb_id <- function(sample, group) {
   paste(clean_pb_component(sample), clean_pb_component(group), sep = "_")
+}
+
+safe_filename <- function(x) {
+  x <- gsub("[^A-Za-z0-9]+", "_", as.character(x))
+  x <- gsub("^_+|_+$", "", x)
+  ifelse(nchar(x) == 0, "unknown", x)
 }
 
 # 1. Generate pseduobulk samples --------------------------------------
@@ -252,26 +260,15 @@ check_metadata_pca <- function(object,
 }
 
 plot_metadata_pca <- function(pca_assoc, padj_cutoff = 0.05) {
-  ggplot(pca_assoc, aes(x = PC, y = covariate, fill = neg_log10_padj)) +
+  sig_assoc <- pca_assoc %>% filter(!is.na(p_adj), p_adj < padj_cutoff)
+
+  p <- ggplot(pca_assoc, aes(x = PC, y = covariate, fill = neg_log10_padj)) +
     geom_tile(color = "white") +
-    geom_point(
-      data = pca_assoc %>% filter(!is.na(p_adj), p_adj < padj_cutoff),
-      aes(x = PC, y = covariate, shape = "padj < 0.05", color = "padj < 0.05"),
-      inherit.aes = FALSE,
-      size = 2.1,
-      stroke = 0.8
-    ) +
     scale_fill_gradient(
       low = "#F7F7F7",
       high = "#4B0082",
       na.value = "grey90",
       name = expression(-log[10] ~ "(padj)")
-    ) +
-    scale_shape_manual(name = NULL, values = c("padj < 0.05" = 8)) +
-    scale_color_manual(name = NULL, values = c("padj < 0.05" = "red")) +
-    guides(
-      shape = guide_legend(override.aes = list(color = "red", size = 3)),
-      color = "none"
     ) +
     theme_bw() +
     theme(
@@ -283,6 +280,25 @@ plot_metadata_pca <- function(pca_assoc, padj_cutoff = 0.05) {
       y = "Metadata covariate",
       title = "Adjusted p-values from PCA metadata association tests"
     )
+
+  if (nrow(sig_assoc) > 0) {
+    p <- p +
+      geom_point(
+        data = sig_assoc,
+        aes(x = PC, y = covariate, shape = "padj < 0.05", color = "padj < 0.05"),
+        inherit.aes = FALSE,
+        size = 2.1,
+        stroke = 0.8
+      ) +
+      scale_shape_manual(name = NULL, values = c("padj < 0.05" = 8)) +
+      scale_color_manual(name = NULL, values = c("padj < 0.05" = "red")) +
+      guides(
+        shape = guide_legend(override.aes = list(color = "red", size = 3)),
+        color = "none"
+      )
+  }
+
+  p
 }
 
 plot_pca_variance_rank <- function(object, reduction = "pca", n_pcs = N_PCS_VAR) {
@@ -402,6 +418,89 @@ run_pseudobulk_exploratory_analysis <- function(seurat_pb,
   seurat_pb
 }
 
+# 9. Rerun PCA/covariate association within each filtered cell-type subset -------
+# If all-data pseudobulk PCA is strongly associated with cell type, subset-level
+# PCA helps check whether technical or biological covariate effects persist after
+# removing between-cell-type variation.
+run_celltype_subset_exploratory_analysis <- function(seurat_pb,
+                                                     group_col,
+                                                     fig_dir = ".",
+                                                     n_pcs_assoc = N_PCS_ASSOC,
+                                                     n_pcs_var = N_PCS_VAR,
+                                                     covariates = BASE_PCA_COVARIATES) {
+  subset_base_dir <- file.path(fig_dir, group_col)
+  dir.create(subset_base_dir, recursive = TRUE, showWarnings = FALSE)
+
+  subset_levels <- sort(unique(as.character(seurat_pb[[group_col]][, 1])))
+
+  for (subset_level in subset_levels) {
+    subset_safe <- safe_filename(subset_level)
+    subset_dir <- file.path(subset_base_dir, subset_safe)
+    dir.create(subset_dir, recursive = TRUE, showWarnings = FALSE)
+
+    subset_cells <- colnames(seurat_pb)[as.character(seurat_pb[[group_col]][, 1]) == subset_level]
+    seurat_subset <- subset(seurat_pb, cells = subset_cells)
+    message("  Subset PCA: ", group_col, " / ", subset_level, " (", ncol(seurat_subset), " pseudobulk samples)")
+
+    n_pcs_subset <- min(n_pcs_var, ncol(seurat_subset) - 1, nrow(seurat_subset) - 1)
+    if (n_pcs_subset < 2) {
+      message("    Skipped: fewer than 3 pseudobulk samples or features.")
+      next
+    }
+
+    seurat_subset <- NormalizeData(
+      seurat_subset,
+      normalization.method = "LogNormalize",
+      scale.factor = 1e6,
+      verbose = FALSE
+    )
+    seurat_subset <- FindVariableFeatures(seurat_subset, verbose = FALSE)
+    seurat_subset <- ScaleData(seurat_subset, verbose = FALSE)
+    seurat_subset <- RunPCA(seurat_subset, npcs = n_pcs_subset, verbose = FALSE)
+
+    subset_covariates <- setdiff(covariates, group_col)
+    subset_covariates <- intersect(subset_covariates, colnames(seurat_subset[[]]))
+
+    pca_assoc <- check_metadata_pca(
+      object = seurat_subset,
+      reduction = "pca",
+      n_pcs = min(n_pcs_assoc, n_pcs_subset),
+      covariates = subset_covariates
+    )
+
+    write.csv(
+      pca_assoc,
+      file.path(subset_dir, paste0("pca_metadata_assoc_", subset_safe, ".csv")),
+      row.names = FALSE
+    )
+
+    p <- plot_metadata_pca(pca_assoc)
+    p <- p + labs(title = paste(group_col, subset_level, "PCA metadata association", sep = " - "))
+    ggsave(
+      file.path(subset_dir, paste0("pca_metadata_assoc_", subset_safe, ".pdf")),
+      plot = p,
+      height = 5.5,
+      width = 8
+    )
+
+    p <- plot_pca_variance_rank(seurat_subset, n_pcs = n_pcs_var)
+    ggsave(
+      file.path(subset_dir, paste0("pca_variance_", subset_safe, ".pdf")),
+      plot = p,
+      height = 4,
+      width = 7
+    )
+
+    save_pca_covariate_plots(
+      object = seurat_subset,
+      covariates = subset_covariates,
+      out_path = file.path(subset_dir, paste0("pca_covariates_", subset_safe, ".pdf"))
+    )
+  }
+
+  invisible(NULL)
+}
+
 process_pseudobulk_level <- function(seu_obj,
                                      sample_col = "sample",
                                      group_col,
@@ -454,6 +553,14 @@ process_pseudobulk_level <- function(seu_obj,
   )
 
   seurat_pb <- run_pseudobulk_exploratory_analysis(
+    seurat_pb = seurat_pb,
+    group_col = group_col,
+    fig_dir = fig_dir,
+    n_pcs_assoc = n_pcs_assoc,
+    n_pcs_var = n_pcs_var
+  )
+
+  run_celltype_subset_exploratory_analysis(
     seurat_pb = seurat_pb,
     group_col = group_col,
     fig_dir = fig_dir,
