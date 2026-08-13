@@ -8,7 +8,7 @@
 
 # --- SLURM submission defaults (pass at submit time, e.g.:
 #     sbatch --account="$SLURM_ACCOUNT" --partition="$SLURM_PARTITION" run_deg_cell_level.slurm ) ---
-export SLURM_ACCOUNT="lasallegrp"
+export SLURM_ACCOUNT="publicgrp"
 export SLURM_PARTITION="high"
 
 # --- project paths ------------------------------------------------------------
