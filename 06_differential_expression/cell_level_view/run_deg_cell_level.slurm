@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=deg_cell_level
-#SBATCH --cpus-per-task=2
+#SBATCH --cpus-per-task=4
 #SBATCH --mem=96G
 #SBATCH --time=4-04:00:00
 #SBATCH --output=logs/%x_%A_%a.out
