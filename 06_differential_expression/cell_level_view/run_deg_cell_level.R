@@ -498,10 +498,12 @@ save_colored_facet_pdf <- function(plot, out_path, width, height, top_colors = N
   dev.off()
 }
 
-bgr_col_fun <- function(mat) {
-  max_abs <- max(abs(mat), na.rm = TRUE)
-  lim <- floor(max_abs)
-  if (!is.finite(lim) || lim == 0) lim <- max_abs
+bgr_col_fun <- function(mat, lim = NULL) {
+  if (is.null(lim)) {
+    max_abs <- max(abs(mat), na.rm = TRUE)
+    lim <- floor(max_abs)
+    if (!is.finite(lim) || lim == 0) lim <- max_abs
+  }
   if (!is.finite(lim) || lim == 0) lim <- 1
   circlize::colorRamp2(c(-lim, 0, lim), c("#2166AC", "#EEEEEE", "#B2182B"))
 }
@@ -640,6 +642,59 @@ save_deg_visualizations <- function(deg, fig_dir, cluster_col, method, top_n_vol
     return(invisible(NULL))
   }
 
+  make_heatmap_lim <- function(mat) {
+    max_abs <- max(abs(mat), na.rm = TRUE)
+    lim <- floor(max_abs)
+    if (!is.finite(lim) || lim == 0) lim <- max_abs
+    if (!is.finite(lim) || lim == 0) lim <- 1
+    lim
+  }
+
+  draw_heatmap_pdf <- function(payload, out_path, color_lim = NULL) {
+    mat <- payload$mat
+    sig_mat <- payload$sig_mat
+    ht <- ComplexHeatmap::Heatmap(
+      mat,
+      name = "avg log2FC\n(mut vs wt)",
+      col = bgr_col_fun(mat, lim = color_lim),
+      top_annotation = payload$col_anno,
+      cluster_columns = FALSE,
+      show_column_names = FALSE,
+      border = payload$title_col,
+      row_names_gp = grid::gpar(fontsize = 10),
+      cell_fun = function(j, i, x, y, width, height, fill) {
+        if (sig_mat[i, j] != "") {
+          grid::grid.text(
+            "*",
+            x,
+            y - height * 0.12,
+            gp = grid::gpar(fontsize = 15, fontface = "bold", col = "black")
+          )
+        }
+      },
+      heatmap_legend_param = list(
+        direction = "vertical",
+        title_gp = grid::gpar(fontsize = 10, fontface = "bold"),
+        labels_gp = grid::gpar(fontsize = 9)
+      ),
+      column_title = sex_title(payload$sex_label),
+      column_title_gp = grid::gpar(col = payload$title_col, fontface = "bold", fontsize = 12)
+    )
+    pdf(out_path,
+      width = max(9, ncol(mat) * 0.35 + 3),
+      height = max(6, nrow(mat) * 0.2 + 2)
+    )
+    ComplexHeatmap::draw(
+      ht,
+      heatmap_legend_side = "right",
+      annotation_legend_side = "right",
+      merge_legend = TRUE
+    )
+    dev.off()
+  }
+
+  heatmap_payloads <- list()
+
   for (sx in unique(deg$animal_sex)) {
     deg_sx <- deg %>% filter(animal_sex == sx)
     top_sx <- top_heatmap_genes %>% filter(animal_sex == sx)
@@ -704,44 +759,33 @@ save_deg_visualizations <- function(deg, fig_dir, cluster_col, method, top_n_vol
 
     sig_mat <- matrix(ifelse(padj_mat < 0.05, "*", ""), nrow = nrow(mat), dimnames = dimnames(mat))
     title_col <- sex_colors_map[[format_sex_label(sx)]] %||% "#333333"
-    ht <- ComplexHeatmap::Heatmap(
-      mat,
-      name = "avg log2FC\n(mut vs wt)",
-      col = bgr_col_fun(mat),
-      top_annotation = col_anno,
-      cluster_columns = FALSE,
-      show_column_names = FALSE,
-      border = title_col,
-      row_names_gp = grid::gpar(fontsize = 10),
-      cell_fun = function(j, i, x, y, width, height, fill) {
-        if (sig_mat[i, j] != "") {
-          grid::grid.text(
-            "*",
-            x,
-            y - height * 0.12,
-            gp = grid::gpar(fontsize = 15, fontface = "bold", col = "black")
-          )
-        }
-      },
-      heatmap_legend_param = list(
-        direction = "vertical",
-        title_gp = grid::gpar(fontsize = 10, fontface = "bold"),
-        labels_gp = grid::gpar(fontsize = 9)
-      ),
-      column_title = sex_title(sx),
-      column_title_gp = grid::gpar(col = title_col, fontface = "bold", fontsize = 12)
+
+    heatmap_payloads[[as.character(sx)]] <- list(
+      sex_label = sx,
+      mat = mat,
+      sig_mat = sig_mat,
+      col_anno = col_anno,
+      title_col = title_col,
+      lim = make_heatmap_lim(mat)
     )
-    pdf(file.path(fig_dir, sprintf("heatmap_top_genes_%s.pdf", sx)),
-      width = max(9, ncol(mat) * 0.35 + 3),
-      height = max(6, nrow(mat) * 0.2 + 2)
+  }
+
+  if (length(heatmap_payloads) == 0) return(invisible(NULL))
+
+  aligned_lim <- min(vapply(heatmap_payloads, `[[`, numeric(1), "lim"), na.rm = TRUE)
+  if (!is.finite(aligned_lim) || aligned_lim == 0) aligned_lim <- 1
+
+  for (payload in heatmap_payloads) {
+    sx <- payload$sex_label
+    draw_heatmap_pdf(
+      payload,
+      file.path(fig_dir, sprintf("heatmap_top_genes_%s.pdf", sx))
     )
-    ComplexHeatmap::draw(
-      ht,
-      heatmap_legend_side = "right",
-      annotation_legend_side = "right",
-      merge_legend = TRUE
+    draw_heatmap_pdf(
+      payload,
+      file.path(fig_dir, sprintf("heatmap_align_top_genes_%s.pdf", sx)),
+      color_lim = aligned_lim
     )
-    dev.off()
   }
 
   invisible(NULL)
