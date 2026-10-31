@@ -10,7 +10,7 @@ suppressPackageStartupMessages({
 })
 parser <- ArgumentParser(description = "Pairwise cell-level DEG benchmark")
 parser$add_argument("--method", default = "all",
-  choices = c("all", "wilcox", "MAST", "MAST_RE", "voomLmFit", "voomLmFit_block"))
+  choices = c("all", "wilcox", "MAST", "MAST_original", "MAST_RE", "voomLmFit", "voomLmFit_block"))
 parser$add_argument("--cluster_col", required = TRUE,
   choices = c("neuron_class", "cell_type_concise"))
 parser$add_argument("--seu", default = "/quobyte/lasallegrp/Osman/shenyu/02_seurat_objects/seu_final.rds")
@@ -23,7 +23,7 @@ parser$add_argument("--resume", action = "store_true",
 args <- parser$parse_args()
 stopifnot(args$min_pct > 0, args$min_pct <= 1, args$min_cells >= 1)
 methods <- if (args$method == "all") {
-  c("wilcox", "MAST", "MAST_RE", "voomLmFit", "voomLmFit_block")
+  c("wilcox", "MAST", "MAST_original", "MAST_RE", "voomLmFit", "voomLmFit_block")
 } else args$method
 safe_filename <- function(x) {
   x <- gsub("[^A-Za-z0-9]+", "_", as.character(x))
@@ -108,6 +108,73 @@ read_resume_result <- function(path) {
   })
 }
 
+# Add MAST_original's model coefficient in log2 units for fold-change plots.
+# Its MAST logFC-component coefficient is stored as `coef` on the natural-log
+# scale; the visualization column is coef / ln(2), placed after avg_log2FC.
+update_mast_viz_fc <- function(file_dir, method, cluster_col) {
+  result_dir <- file.path(file_dir, method, cluster_col)
+  if (!dir.exists(result_dir)) {
+    message("No ", method, " result directory to update: ", result_dir)
+    return(invisible(NULL))
+  }
+  paths <- list.files(result_dir, pattern = "^deg_.*\\.csv$", full.names = TRUE)
+  if (!length(paths)) {
+    message("No ", method, " DEG CSVs to update: ", result_dir)
+    return(invisible(NULL))
+  }
+
+  for (path in paths) {
+    de <- read.csv(path, check.names = FALSE, stringsAsFactors = FALSE)
+    required <- c("avg_log2FC", "coef")
+    missing <- setdiff(required, names(de))
+    if (length(missing)) {
+      stop("Cannot add avg_log2FC_viz in ", path, "; missing: ",
+        paste(missing, collapse = ", "))
+    }
+    de$avg_log2FC_viz <- de$coef / log(2)
+    column_order <- setdiff(names(de), "avg_log2FC_viz")
+    column_order <- append(column_order, "avg_log2FC_viz",
+      after = match("avg_log2FC", column_order))
+    de <- de[, column_order, drop = FALSE]
+    write.csv(de, path, row.names = FALSE)
+    message("Updated ", method, " log2 coefficient: ", path)
+  }
+  invisible(NULL)
+}
+
+extract_mast_original_summary <- function(mast_summary, coef_i, genes_keep) {
+  dt <- if (is.data.frame(mast_summary)) {
+    mast_summary
+  } else if (is.list(mast_summary) && "datatable" %in% names(mast_summary)) {
+    mast_summary[["datatable"]]
+  } else if (isS4(mast_summary) &&
+             "datatable" %in% methods::slotNames(mast_summary)) {
+    methods::slot(mast_summary, "datatable")
+  } else {
+    stop("Unsupported MAST_original summary format")
+  }
+  dt <- as.data.frame(dt)
+  required <- c("primerid", "contrast", "component", "Pr(>Chisq)", "coef")
+  if (!all(required %in% names(dt))) {
+    stop("MAST_original summary is missing required columns")
+  }
+
+  h <- dt[dt$component == "H" & dt$contrast == coef_i,
+    c("primerid", "Pr(>Chisq)"), drop = FALSE]
+  fc <- dt[dt$component == "logFC" & dt$contrast == coef_i,
+    c("primerid", "coef"), drop = FALSE]
+  p_idx <- match(genes_keep, h$primerid)
+  fc_idx <- match(genes_keep, fc$primerid)
+  p_val <- h[["Pr(>Chisq)"]][p_idx]
+  coef <- fc$coef[fc_idx]
+  de <- data.frame(gene = genes_keep, p_val = p_val, coef = coef,
+    stringsAsFactors = FALSE)
+  de$p_val_adj <- p.adjust(de$p_val, method = "BH", n = length(genes_keep))
+  de[["Pr(>Chisq)"]] <- de$p_val
+  de$error_message <- ""
+  de
+}
+
 contrasts <- data.frame(
   contrast = c("sex_wt", "sex_mut", "genotype_male", "genotype_female"),
   reference = c("wt_male", "mut_male", "wt_male", "wt_female"),
@@ -179,7 +246,7 @@ for (method_i in methods) {
       expr <- GetAssayData(sub, assay = "RNA", layer = "data")
       # CDR is computed over ALL input genes BEFORE any gene filtering.
       # Scale within this pairwise fit; this is equivalent to scaled nFeature.
-      if (method_i %in% c("MAST", "MAST_RE")) {
+      if (method_i %in% c("MAST", "MAST_original", "MAST_RE")) {
         cdr <- Matrix::colMeans(expr > 0)
         if (!is.finite(sd(cdr)) || sd(cdr) == 0) {
           stop("CDR has zero variance: ", key)
@@ -203,7 +270,7 @@ for (method_i in methods) {
         next
       }
 
-      # wicoxon, MAST
+      # Wilcoxon and Seurat MAST
       if (method_i %in% c("wilcox", "MAST")) {
         de <- FindMarkers(sub, ident.1 = comp_i, ident.2 = ref_i,
           test.use = method_i, slot = "data", features = genes_keep,
@@ -214,6 +281,21 @@ for (method_i in methods) {
         # Preserve FindMarkers Bonferroni values; use BH for benchmark plots.
         de$p_val_bonferroni <- de$p_val_adj
         de$p_val_adj <- p.adjust(de$p_val, method = "BH")
+      } else if (method_i == "MAST_original") {
+        # Original all-gene MAST fit, without a sample random intercept.
+        expr_keep <- expr[genes_keep, , drop = FALSE]
+        fd <- data.frame(primerid = rownames(expr_keep), row.names = rownames(expr_keep))
+        sca <- MAST::FromMatrix(as.matrix(expr_keep), cData = meta, fData = fd)
+        rm(expr_keep)
+        coef_i <- paste0("group", comp_i)
+        fit <- MAST::zlm(
+          ~ group + cngeneson, sca = sca, method = "bayesglm",
+          ebayes = TRUE, silent = FALSE, parallel = FALSE
+        )
+        mast_summary <- MAST::summary(fit, doLRT = coef_i)
+        de <- extract_mast_original_summary(mast_summary, coef_i, genes_keep)
+        message("MAST_original missing p-values: ", sum(is.na(de$p_val)),
+          "/", nrow(de), " / ", key)
       } else {
         # MAST_RE
         if (method_i == "MAST_RE") {
@@ -290,7 +372,7 @@ for (method_i in methods) {
       de$n_reference_samples <- length(unique(meta$sample[meta$group == ref_i]))
       de$n_comparison_samples <- length(unique(meta$sample[meta$group == comp_i]))
       de$min_pct <- args$min_pct
-      de$latent_vars_used <- if (method_i %in% c("MAST", "MAST_RE")) "cngeneson" else NA_character_
+      de$latent_vars_used <- if (method_i %in% c("MAST", "MAST_original", "MAST_RE")) "cngeneson" else NA_character_
       de$block <- if (method_i %in% c("MAST_RE", "voomLmFit_block")) "sample" else NA_character_
       if (method_i == "voomLmFit_block") {
         de$consensus_correlation <- consensus_correlation
@@ -308,3 +390,7 @@ for (method_i in methods) {
   write.csv(bind_rows(all_results),
     file.path(out_dir, paste0("deg_all_", method_i, "_", args$cluster_col, ".csv")), row.names = FALSE)
 }
+
+# Convert the MAST model coefficients from natural-log to log2 units for plots.
+update_mast_viz_fc(args$file_dir, "MAST_original", args$cluster_col)
+update_mast_viz_fc(args$file_dir, "MAST_RE", args$cluster_col)
